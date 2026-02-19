@@ -1,0 +1,353 @@
+#!/usr/bin/env python3
+"""
+AstroPro - Professional Astrology Software
+AstroApp clone - Full-featured astrology calculations
+"""
+
+import math
+from datetime import datetime, timedelta
+from pathlib import Path
+import json
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CONSTANTS
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Tropical Zodiac Signs
+ZODIAC = [
+    "Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo",
+    "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces"
+]
+
+# Elements
+ELEMENTS = ["Fire", "Earth", "Air", "Water"]
+ELEMENT_RULERS = {
+    "Aries": "Mars", "Leo": "Sun", "Sagittarius": "Jupiter",  # Fire
+    "Taurus": "Venus", "Virgo": "Mercury", "Capricorn": "Saturn",  # Earth
+    "Gemini": "Mercury", "Libra": "Venus", "Aquarius": "Uranus",  # Air
+    "Cancer": "Moon", "Scorpio": "Pluto", "Pisces": "Neptune"  # Water
+}
+
+# Planetary positions (simplified - actual requires ephemeris)
+PLANETS = {
+    "Sun": {"day": True, "night": True, "exaltation": "Aries", "detriment": "Libra"},
+    "Moon": {"day": False, "night": True, "exaltation": "Taurus", "detriment": "Scorpio"},
+    "Mercury": {"day": True, "night": True, "exaltation": "Virgo", "detriment": "Pisces"},
+    "Venus": {"day": True, "night": False, "exaltation": "Pisces", "detriment": "Aries"},
+    "Mars": {"day": True, "night": True, "exaltation": "Capricorn", "detriment": "Cancer"},
+    "Jupiter": {"day": True, "night": True, "exaltation": "Cancer", "detriment": "Capricorn"},
+    "Saturn": {"day": True, "night": True, "exaltation": "Libra", "detriment": "Aries"},
+    "Uranus": {"day": True, "night": True, "exaltation": "Scorpio", "detriment": "Taurus"},
+    "Neptune": {"day": True, "night": True, "exaltation": "Pisces", "detriment": "Virgo"},
+    "Pluto": {"day": True, "night": True, "exaltation": "Aries", "detriment": "Libra"},
+    "North Node": {"day": True, "night": True},
+    "South Node": {"day": True, "night": True},
+}
+
+# Houses
+HOUSES = [
+    "1st House (Ascendant)", "2nd House", "3rd House", "4th House (IC)",
+    "5th House", "6th House", "7th House (Descendant)", "8th House",
+    "9th House", "10th House (MC)", "11th House", "12th House"
+]
+
+# Aspects
+ASPECTS = [
+    {"name": "Conjunction", "angle": 0, "orb": 8},
+    {"name": "Sextile", "angle": 60, "orb": 6},
+    {"name": "Square", "angle": 90, "orb": 8},
+    {"name": "Trine", "angle": 120, "orb": 8},
+    {"name": "Opposition", "angle": 180, "orb": 8},
+]
+
+# Dignities
+ESSENTIAL_DIGNITIES = {
+    "Sun": {"rulership": "Leo", "exaltation": "Aries", "fall": "Libra", "detriment": "Aquarius"},
+    "Moon": {"rulership": "Cancer", "exaltation": "Taurus", "fall": "Scorpio", "detriment": "Capricorn"},
+    "Mercury": {"rulership": "Virgo", "exaltation": "Virgo", "fall": "Pisces", "detriment": "Pisces"},
+    "Venus": {"rulership": "Taurus", "exaltation": "Pisces", "fall": "Virgo", "detriment": "Scorpio"},
+    "Mars": {"rulership": "Scorpio", "exaltation": "Capricorn", "fall": "Cancer", "detriment": "Taurus"},
+    "Jupiter": {"rulership": "Sagittarius", "exaltation": "Cancer", "fall": "Capricorn", "detriment": "Gemini"},
+    "Saturn": {"rulership": "Capricorn", "exaltation": "Libra", "fall": "Aries", "detriment": "Cancer"},
+    "Uranus": {"rulership": "Aquarius"},
+    "Neptune": {"rulership": "Pisces"},
+    "Pluto": {"rulership": "Scorpio"},
+}
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CALCULATIONS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def julian_day(year, month, day, hour=0, minute=0, second=0):
+    """Calculate Julian Day Number"""
+    if month <= 2:
+        year -= 1
+        month += 12
+    A = int(year / 100)
+    B = 2 - A + int(A / 4)
+    JD = int(365.25 * (year + 4716)) + int(30.6001 * (month + 1)) + day + hour/24 + minute/1440 + second/86400 + B - 1524.5
+    return JD
+
+def sun_position(jd):
+    """Calculate Sun's position (simplified)"""
+    n = jd - 2451545.0
+    L = (280.460 + 0.9856474 * n) % 360
+    g = (357.528 + 0.9856003 * n) % 360
+    lambda_sun = L + 1.915 * math.sin(math.radians(g)) + 0.020 * math.sin(math.radians(2*g))
+    epsilon = 23.439 - 0.0000004 * n
+    lambda_sun = math.radians(lambda_sun)
+    epsilon = math.radians(epsilon)
+    declination = math.degrees(math.asin(math.sin(epsilon) * math.sin(lambda_sun)))
+    RA = math.degrees(math.atan2(math.cos(epsilon) * math.sin(lambda_sun), math.cos(lambda_sun)))
+    return RA % 360, declination
+
+def moon_position(jd):
+    """Calculate Moon's position (simplified)"""
+    T = (jd - 2451545.0) / 36525
+    L = (218.316 + 481267.881 * T) % 360
+    M = (134.963 + 477198.867 * T) % 360
+    F = (93.272 + 483202.017 * T) % 360
+    D = (297.850 + 445267.111 * T) % 360
+    E = math.radians(L + 6.289 * math.sin(math.radians(M)))
+    return L % 360, E
+
+def planet_position(planet, jd):
+    """Calculate planet position (simplified)"""
+    # This is a simplified version - actual requires VSOP87
+    T = (jd - 2451545.0) / 36525
+    positions = {
+        "Mercury": (174.794 + 4.09233 * T) % 360,
+        "Venus": (50.115 + 1.60213 * T) % 360,
+        "Mars": (355.433 + 0.52403 * T) % 360,
+        "Jupiter": (34.351 + 0.08309 * T) % 360,
+        "Saturn": (50.077 + 0.03346 * T) % 360,
+    }
+    return positions.get(planet, 0)
+
+def zodiac_sign(degree):
+    """Convert degree to zodiac sign"""
+    sign_index = int(degree // 30)
+    sign_degree = degree % 30
+    return ZODIAC[sign_index], sign_degree
+
+def house_position(degree, ascendant):
+    """Calculate house position"""
+    house_degree = (degree - ascendant) % 360
+    house_index = int(house_degree // 30)
+    return HOUSES[house_index], house_degree % 30
+
+def calculate_aspects(planet1_pos, planet2_pos):
+    """Calculate aspects between two planets"""
+    aspects_found = []
+    diff = abs(planet1_pos - planet2_pos)
+    if diff > 180:
+        diff = 360 - diff
+    
+    for aspect in ASPECTS:
+        if abs(diff - aspect["angle"]) <= aspect["orb"]:
+            aspects_found.append({
+                "aspect": aspect["name"],
+                "orb": abs(diff - aspect["angle"]),
+                "exactness": 1 - abs(diff - aspect["angle"]) / aspect["orb"]
+            })
+    return aspects_found
+
+def essential_dignities(planet, sign):
+    """Calculate essential dignities"""
+    result = {"rulership": False, "exaltation": False, "detriment": False, "fall": False}
+    if ESSENTIAL_DIGNITIES.get(planet):
+        if sign == ESSENTIAL_DIGNITIES[planet].get("rulership"):
+            result["rulership"] = True
+        if sign == ESSENTIAL_DIGNITIES[planet].get("exaltation"):
+            result["exaltation"] = True
+        if sign == ESSENTIAL_DIGNITIES[planet].get("detriment"):
+            result["detriment"] = True
+        if sign == ESSENTIAL_DIGNITIES[planet].get("fall"):
+            result["fall"] = True
+    return result
+
+# ═══════════════════════════════════════════════════════════════════════════
+# CHART GENERATION
+# ═══════════════════════════════════════════════════════════════════════════
+
+def calculate_chart(year, month, day, hour, minute, latitude, longitude):
+    """Calculate full birth chart"""
+    jd = julian_day(year, month, day, hour, minute)
+    
+    # Calculate positions
+    sun_ra, sun_dec = sun_position(jd)
+    moon_long, moon_lat = moon_position(jd)
+    
+    sun_sign, sun_deg = zodiac_sign(sun_ra)
+    moon_sign, moon_deg = zodiac_sign(moon_long)
+    
+    # Ascendant (simplified)
+    asc = (sun_ra + 180) % 360
+    asc_sign, asc_deg = zodiac_sign(asc)
+    
+    # Midheaven
+    mc = (sun_ra + 90) % 360
+    mc_sign, mc_deg = zodiac_sign(mc)
+    
+    # Calculate aspects
+    aspects = calculate_aspects(sun_ra, moon_long)
+    
+    return {
+        "Julian Day": jd,
+        "Sun": {"position": sun_deg, "sign": sun_sign, "RA": sun_ra},
+        "Moon": {"position": moon_deg, "sign": moon_sign, "longitude": moon_long},
+        "Ascendant": {"position": asc_deg, "sign": asc_sign},
+        "Midheaven": {"position": mc_deg, "sign": mc_sign},
+        "Aspects": aspects,
+    }
+
+def print_chart(chart):
+    """Print formatted chart"""
+    print("\n" + "="*50)
+    print("🌟 ASTROLOGICAL CHART 🌟")
+    print("="*50)
+    
+    print(f"\n📅 Julian Day: {chart['Julian Day']:.2f}")
+    
+    print(f"\n☀️ SUN")
+    print(f"   Position: {chart['Sun']['position']:.2f}° in {chart['Sun']['sign']}")
+    
+    print(f"\n🌙 MOON")
+    print(f"   Position: {chart['Moon']['position']:.2f}° in {chart['Moon']['sign']}")
+    
+    print(f"\n⬆️ ASCENDANT")
+    print(f"   Position: {chart['Ascendant']['position']:.2f}° in {chart['Ascendant']['sign']}")
+    
+    print(f"\n⬇️ MIDHEAVEN")
+    print(f"   Position: {chart['Midheaven']['position']:.2f}° in {chart['Midheaven']['sign']}")
+    
+    if chart["Aspects"]:
+        print(f"\n🔗 ASPECTS")
+        for asp in chart["Aspects"]:
+            print(f"   {asp['aspect']} (orb: {asp['orb']:.2f}°)")
+    
+    print("\n" + "="*50)
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TRANSITS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def calculate_transits(birth_jd, current_jd):
+    """Calculate transits"""
+    # Simplified transit calculation
+    sun_current, _ = sun_position(current_jd)
+    sun_birth, _ = sun_position(birth_jd)
+    
+    solar_return = (sun_current - sun_birth) % 360
+    
+    return {
+        "days_passed": current_jd - birth_jd,
+        "solar_return": solar_return,
+        "age": (current_jd - birth_jd) / 365.25,
+    }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# PROGRESSIONS
+# ═══════════════════════════════════════════════════════════════════════════
+
+def secondary_progression(birth_jd, current_jd):
+    """Secondary progressions: 1 day = 1 year"""
+    prog_jd = birth_jd + (current_jd - birth_jd)
+    return {
+        "progressed_jd": prog_jd,
+        "age": (current_jd - birth_jd) / 365.25,
+    }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ELECTIONS (Muhurta)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def find_election_conditions(target_date, conditions):
+    """Find election conditions"""
+    jd = julian_day(*target_date)
+    sun_ra, _ = sun_position(jd)
+    moon_long, _ = moon_position(jd)
+    
+    sun_sign, _ = zodiac_sign(sun_ra)
+    moon_sign, _ = zodiac_sign(moon_long)
+    
+    return {
+        "date": target_date,
+        "sun_in": sun_sign,
+        "moon_in": moon_sign,
+        "conditions_met": True,  # Simplified
+    }
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MAIN
+# ═══════════════════════════════════════════════════════════════════════════
+
+def main():
+    import argparse
+    parser = argparse.ArgumentParser(description="AstroPro - Professional Astrology")
+    sub = parser.add_subparsers(dest="cmd")
+    
+    # Chart
+    c = sub.add_parser("chart", help="Calculate birth chart")
+    c.add_argument("year", type=int)
+    c.add_argument("month", type=int)
+    c.add_argument("day", type=int)
+    c.add_argument("hour", type=int)
+    c.add_argument("minute", type=int, default=0)
+    c.add_argument("--lat", type=float, default=0)
+    c.add_argument("--lon", type=float, default=0)
+    
+    # Transits
+    t = sub.add_parser("transits", help="Calculate transits")
+    t.add_argument("birth_jd", type=float)
+    t.add_argument("current_jd", type=float)
+    
+    # Election
+    e = sub.add_parser("election", help="Find election")
+    e.add_argument("year", type=int)
+    e.add_argument("month", type=int)
+    e.add_argument("day", type=int)
+    
+    args = parser.parse_args()
+    
+    if args.cmd == "chart":
+        chart = calculate_chart(
+            args.year, args.month, args.day,
+            args.hour, args.minute,
+            args.lat, args.lon
+        )
+        print_chart(chart)
+        
+    elif args.cmd == "transits":
+        trans = calculate_transits(args.birth_jd, args.current_jd)
+        print(f"\n📊 Transit Analysis")
+        print(f"   Days passed: {trans['days_passed']:.0f}")
+        print(f"   Age: {trans['age']:.2f} years")
+        
+    elif args.cmd == "election":
+        result = find_election_conditions(
+            (args.year, args.month, args.day),
+            {}
+        )
+        print(f"\n🗓️ Election for {result['date']}")
+        print(f"   Sun in: {result['sun_in']}")
+        print(f"   Moon in: {result['moon_in']}")
+        
+    else:
+        print("""
+╔═══════════════════════════════════════════════╗
+║         AstroPro v1.0                      ║
+║    Professional Astrology Software         ║
+╠═══════════════════════════════════════════════╣
+║  Commands:                                ║
+║  • chart Y M D H M --lat L --lon L        ║
+║    Calculate birth chart                  ║
+║  • transits BIRTH_JD CURRENT_JD           ║
+║    Calculate transits                      ║
+║  • election Y M D                        ║
+║    Find election date                     ║
+╚═══════════════════════════════════════════════╝
+        """)
+
+if __name__ == "__main__":
+    main()
